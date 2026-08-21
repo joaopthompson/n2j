@@ -165,7 +165,7 @@ function EntryModal({ initial, onSave, onClose }) {
     <button {...rest} className="rounded-lg px-2.5 py-2 text-sm border flex-1" style={{ background: on ? ACCENT : CARD2, color: on ? "#1a1610" : TXT, borderColor: on ? ACCENT : "#3a352d", fontWeight: on ? 700 : 400 }}>{children}</button>
   );
   return (
-    <div className="max-w-md mx-auto px-4 pt-6" style={{ paddingBottom: "3rem" }}>
+    <div className="w-full max-w-md mx-auto px-4" style={{ paddingTop: "calc(1rem + env(safe-area-inset-top))", paddingBottom: "3rem" }}>
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-lg font-bold" style={{ color: TXT }}>{initial.id ? "Editar registro" : "Novo registro"}</h2>
         <button onClick={onClose} className="rounded-full px-3 py-1.5 text-sm border" style={{ color: TXT, background: CARD2, borderColor: "#3a352d" }}>Cancelar</button>
@@ -703,12 +703,12 @@ function App() {
 
   const tabs = [["hoje", "⬇", "Hoje"], ["hist", "📅", "Histórico"], ["anal", "📊", "Análises"], ["dados", "🗄", "Dados"]];
   return (
-    <div className="min-h-screen" style={{ background: BG, fontFamily: "system-ui, sans-serif" }}>
+    <div className="flex flex-col" style={{ background: BG, fontFamily: "system-ui, sans-serif", minHeight: "100dvh" }}>
       {modal ? (
         <EntryModal initial={modal} onSave={saveEntry} onClose={() => setModal(null)} />
       ) : (
         <>
-          <div className="max-w-md mx-auto px-4 pt-6" style={{ paddingBottom: "6.5rem" }}>
+          <div className="w-full max-w-md mx-auto px-4 flex-1" style={{ paddingTop: "calc(1.5rem + env(safe-area-inset-top))", paddingBottom: "6.5rem" }}>
             {tab === "hoje" && <HojeTab entries={entries} onEdit={setModal} onDelete={delEntry} goTo={setTab} />}
             {tab === "hist" && <HistoricoTab entries={entries} onEdit={setModal} onDelete={delEntry} />}
             {tab === "anal" && <AnalisesTab entries={entries} />}
