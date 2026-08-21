@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>N2J</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="N2J">
+<meta name="theme-color" content="#12100d">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+html,body{background:#12100d;margin:0;overscroll-behavior-y:none}
+*{-webkit-tap-highlight-color:transparent}
+#boot{color:#8f8779;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">Carregando N2J…</div></div>
+<script>
+// Shim: mesma API de armazenamento do artifact, agora sobre localStorage
+window.storage = {
+  async get(k){ const v = localStorage.getItem(k); if (v === null) throw new Error("not found"); return { key: k, value: v }; },
+  async set(k, v){ localStorage.setItem(k, v); return { key: k, value: v }; },
+  async delete(k){ localStorage.removeItem(k); return { key: k, deleted: true }; },
+};
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo } = React;
+const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } = Recharts;
+
+// ---------- constantes ----------
+const BRISTOL = {
+  1: { name: "Bolinhas duras separadas", cat: "irregular" },
+  2: { name: "Linguiça granulosa", cat: "irregular" },
+  3: { name: "Linguiça com rachaduras", cat: "normal" },
+  4: { name: "Lisa e macia", cat: "normal" },
+  5: { name: "Pedaços macios", cat: "normal" },
+  6: { name: "Consistência pastosa", cat: "moderada" },
+  7: { name: "Líquido", cat: "irregular" },
+};
+const CAT_COLOR = { normal: "#5fb26a", moderada: "#e0a63e", irregular: "#d96a5a" };
+const ACCENT = "#d98a3e";
+const BG = "#12100d";
+const CARD = "#1c1915";
+const CARD2 = "#26221c";
+const TXT = "#efe9e1";
+const MUT = "#8f8779";
+const BORDER = "#2b261f";
+const LOCAIS = ["SP", "Laranjeiras", "Outros Brasil", "Exterior"];
+const FEEL = { 1: "😖", 2: "🙁", 3: "😐", 4: "🙂", 5: "😄" };
+const URG = { 1: "🧘", 2: "🧍", 3: "🚶", 4: "🏃", 5: "🚨" };
+const QTD = { 1: "PP", 2: "P", 3: "M", 4: "G", 5: "GG" };
+const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const STORE_KEY = "plop-data-v1";
+
+// ---------- datas ----------
+const pad = (n) => String(n).padStart(2, "0");
+const toStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const hoje = () => toStr(new Date());
+const agora = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const addDias = (s, n) => { const d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return toStr(d); };
+const fmtLonga = (s) => new Date(s + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+const fmtCurta = (s) => new Date(s + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+const dtOf = (e) => { const d = new Date(`${e.date}T${/^\d{2}:\d{2}/.test(e.time || "") ? e.time : "12:00"}:00`); return isNaN(d) ? new Date(e.date + "T12:00:00") : d; };
+const diasEntre = (a, b) => Math.max(1, Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000) + 1);
+const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+
+// ---------- estatística ----------
+function computeStreaks(entries) {
+  const days = new Set(entries.map((e) => e.date));
+  let cur = 0, d = hoje();
+  if (!days.has(d)) d = addDias(d, -1);
+  while (days.has(d)) { cur++; d = addDias(d, -1); }
+  return { cur };
+}
+const media = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+const fmt = (v, d = 1) => (v == null || isNaN(v) ? "–" : v.toFixed(d).replace(".", ","));
+
+// Anota derivados na série cronológica completa
+function anotar(entries) {
+  const sorted = [...entries].filter((e) => validDate(e.date)).sort((a, b) => dtOf(a) - dtOf(b));
+  let prev = null;
+  for (const e of sorted) {
+    const dt = dtOf(e);
+    e._h = dt.getHours();
+    e._dow = new Date(e.date + "T12:00:00").getDay();
+    e._int = prev ? (dt - prev) / 3600000 : null;
+    prev = dt;
+  }
+  return sorted;
+}
+
+// ---------- ui básica ----------
+const Chip = ({ on, children, ...rest }) => (
+  <button {...rest} className="rounded-full px-3 py-1 text-xs border" style={{ background: on ? ACCENT : CARD2, color: on ? "#1a1610" : TXT, borderColor: on ? ACCENT : "#3a352d", fontWeight: on ? 700 : 400 }}>{children}</button>
+);
+const Section = ({ title, right, children }) => (
+  <div className="rounded-2xl p-4 mb-3" style={{ background: CARD }}>
+    <div className="flex justify-between items-center mb-3 gap-2 flex-wrap"><div className="font-bold text-sm" style={{ color: TXT }}>{title}</div>{right}</div>
+    {children}
+  </div>
+);
+const NUM = { fontVariantNumeric: "tabular-nums" };
+const HBar = ({ label, v, max, color = ACCENT, r1, r2, lw = 56 }) => (
+  <div className="flex items-center gap-2 mb-1.5 text-xs">
+    <span className="shrink-0 text-right whitespace-nowrap" style={{ color: MUT, width: lw }}>{label}</span>
+    <div className="flex-1 h-3.5 rounded" style={{ background: BORDER }}>
+      <div className="h-3.5 rounded" style={{ width: `${max ? (v / max) * 100 : 0}%`, background: color, minWidth: v ? 2 : 0 }} />
+    </div>
+    <span className="shrink-0 text-right" style={{ color: MUT, width: 34, ...NUM }}>{r1}</span>
+    <span className="shrink-0 text-right" style={{ color: MUT, width: 44, ...NUM }}>{r2}</span>
+  </div>
+);
+function StatCard({ value, label, sub, active, onClick }) {
+  return (
+    <button onClick={onClick} disabled={!onClick} className="flex-1 rounded-xl px-2 py-3 text-center border" style={{ background: CARD, borderColor: active ? ACCENT : BORDER, cursor: onClick ? "pointer" : "default" }}>
+      <div className="text-xl font-bold" style={{ color: active ? ACCENT : TXT }}>{value}</div>
+      <div className="text-[10px] tracking-wide uppercase mt-0.5" style={{ color: MUT }}>{label}</div>
+      {sub ? <div className="text-[10px]" style={{ color: MUT }}>{sub}</div> : null}
+    </button>
+  );
+}
+
+function EntryCard({ e, onEdit, onDelete }) {
+  const b = BRISTOL[e.bristolType] || { name: "?", cat: "moderada" };
+  const c = CAT_COLOR[b.cat];
+  return (
+    <div onClick={() => onEdit(e)} role="button" tabIndex={0} onKeyDown={(ev) => ev.key === "Enter" && onEdit(e)} className="rounded-xl p-3 flex gap-3 items-start cursor-pointer" style={{ background: CARD, borderLeft: `3px solid ${c}` }}>
+      <div className="rounded-full flex items-center justify-center font-bold text-sm shrink-0" style={{ width: 34, height: 34, background: c + "26", color: c, marginTop: 2 }}>{e.bristolType}</div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 text-xs" style={{ color: MUT }}>
+          <span className="font-semibold" style={{ color: TXT }}>{e.time}</span>
+          <span className="rounded-full px-1.5 py-0.5 border text-[10px]" style={{ borderColor: "#3a352d" }}>📍 {e.location}</span>
+          {e.feeling ? <span>{FEEL[e.feeling]}</span> : null}
+        </div>
+        <div className="font-semibold mt-0.5 text-sm" style={{ color: TXT }}>{b.name}</div>
+        <div className="flex items-center gap-3 text-xs mt-1" style={{ color: MUT }}>
+          <span title={`Urgência ${e.urgency}`}>{URG[e.urgency]}</span>
+          {e.quantity ? <span className="rounded px-1.5 py-0.5 border text-[10px] font-bold" style={{ borderColor: "#3a352d", color: TXT }}>{QTD[e.quantity]}</span> : null}
+        </div>
+        {e.notes ? <div className="text-xs mt-1 italic" style={{ color: MUT }}>{e.notes}</div> : null}
+      </div>
+      <button onClick={(ev) => { ev.stopPropagation(); onDelete(e.id); }} className="text-sm shrink-0" style={{ color: MUT }} aria-label="Apagar">🗑️</button>
+    </div>
+  );
+}
+
+// ---------- formulário ----------
+function EntryModal({ initial, onSave, onClose }) {
+  const [f, setF] = useState(initial);
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const Row = ({ label, children }) => (
+    <div className="mb-4"><div className="text-xs uppercase tracking-wide mb-1.5" style={{ color: MUT }}>{label}</div>{children}</div>
+  );
+  const Opt = ({ on, children, ...rest }) => (
+    <button {...rest} className="rounded-lg px-2.5 py-2 text-sm border flex-1" style={{ background: on ? ACCENT : CARD2, color: on ? "#1a1610" : TXT, borderColor: on ? ACCENT : "#3a352d", fontWeight: on ? 700 : 400 }}>{children}</button>
+  );
+  return (
+    <div className="max-w-md mx-auto px-4 pt-6" style={{ paddingBottom: "3rem" }}>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg font-bold" style={{ color: TXT }}>{initial.id ? "Editar registro" : "Novo registro"}</h2>
+        <button onClick={onClose} className="rounded-full px-3 py-1.5 text-sm border" style={{ color: TXT, background: CARD2, borderColor: "#3a352d" }}>Cancelar</button>
+      </div>
+        <Row label="Escala Bristol">
+          <div className="grid grid-cols-1 gap-1.5">
+            {Object.entries(BRISTOL).map(([n, b]) => (
+              <button key={n} onClick={() => set("bristolType", +n)} className="rounded-lg px-3 py-2 text-left text-sm border flex items-center gap-2" style={{ background: f.bristolType === +n ? CAT_COLOR[b.cat] + "26" : CARD2, borderColor: f.bristolType === +n ? CAT_COLOR[b.cat] : "#3a352d", color: TXT }}>
+                <span className="font-bold" style={{ color: CAT_COLOR[b.cat] }}>{n}</span> {b.name}
+              </button>
+            ))}
+          </div>
+        </Row>
+        <div className="grid grid-cols-2 gap-3">
+          <Row label="Data"><input type="date" value={f.date} onChange={(e) => set("date", e.target.value)} className="w-full rounded-xl px-3 border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", colorScheme: "dark", fontSize: 16, height: 48, WebkitAppearance: "none", appearance: "none" }} /></Row>
+          <Row label="Hora"><input type="time" value={f.time} onChange={(e) => set("time", e.target.value)} className="w-full rounded-xl px-3 border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", colorScheme: "dark", fontSize: 16, height: 48, WebkitAppearance: "none", appearance: "none" }} /></Row>
+        </div>
+        <Row label="Urgência">
+          <div className="flex gap-1.5">{[1, 2, 3, 4, 5].map((i) => <Opt key={i} on={f.urgency === i} onClick={() => set("urgency", i)}><div>{URG[i]}</div><div className="text-[10px]">{i}</div></Opt>)}</div>
+        </Row>
+        <Row label="Sensação">
+          <div className="flex gap-1.5">{[1, 2, 3, 4, 5].map((i) => <Opt key={i} on={f.feeling === i} onClick={() => set("feeling", f.feeling === i ? null : i)}>{FEEL[i]}</Opt>)}</div>
+        </Row>
+        <Row label="Quantidade">
+          <div className="flex gap-1.5">{[1, 2, 3, 4, 5].map((i) => <Opt key={i} on={f.quantity === i} onClick={() => set("quantity", f.quantity === i ? null : i)}>{QTD[i]}</Opt>)}</div>
+        </Row>
+        <Row label="Local"><div className="flex gap-1.5 flex-wrap">{LOCAIS.map((l) => <Opt key={l} on={f.location === l} onClick={() => set("location", l)}>{l}</Opt>)}</div></Row>
+        <Row label="Notas"><input value={f.notes || ""} onChange={(e) => set("notes", e.target.value)} placeholder="Opcional" className="w-full rounded-xl px-3 border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", fontSize: 16, height: 48 }} /></Row>
+        <button onClick={() => onSave(f)} className="w-full rounded-xl py-3 font-bold" style={{ background: ACCENT, color: "#1a1610" }}>Salvar</button>
+    </div>
+  );
+}
+
+// ---------- aba Hoje ----------
+function HojeTab({ entries, onEdit, onDelete, goTo }) {
+  const [view, setView] = useState("hoje"); // hoje | 7d
+  const t = hoje();
+  const doDia = entries.filter((e) => e.date === t).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  const sete = entries.filter((e) => e.date >= addDias(t, -6));
+  const dates = entries.map((e) => e.date).filter(validDate).sort();
+  const span = dates.length ? diasEntre(dates[0], t) : 1;
+  const { cur } = computeStreaks(entries);
+  const lista = view === "hoje" ? doDia : [...sete].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  // agrupa por dia quando 7d
+  const grupos = useMemo(() => {
+    if (view === "hoje") return [[t, lista]];
+    const m = {};
+    for (const e of lista) (m[e.date] = m[e.date] || []).push(e);
+    return Object.entries(m).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [view, entries]);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <div className="text-sm" style={{ color: MUT }}>Olá!</div>
+        <div className="text-xs font-bold tracking-widest" style={{ color: ACCENT }}>N2J</div>
+      </div>
+      <h1 className="text-2xl font-bold mb-4 capitalize" style={{ color: TXT }}>{fmtLonga(t)}</h1>
+      <div className="flex gap-2 mb-6">
+        <StatCard value={doDia.length} label="Hoje" active={view === "hoje"} onClick={() => setView("hoje")} />
+        <StatCard value={sete.length} label="7 dias" sub={`média ${fmt(sete.length / 7)}`} active={view === "7d"} onClick={() => setView("7d")} />
+        <StatCard value={fmt(entries.length / span)} label="Média/dia" onClick={() => goTo("anal")} />
+        <StatCard value={cur} label="Sequência" onClick={() => goTo("hist")} />
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="font-bold" style={{ color: TXT }}>{view === "hoje" ? "Registros de hoje" : "Últimos 7 dias"}</h2>
+        <span className="rounded-full px-2 py-0.5 text-xs" style={{ background: CARD2, color: MUT }}>{lista.length}</span>
+      </div>
+      {lista.length === 0 ? (
+        <div className="text-center py-14" style={{ color: MUT }}>
+          <div className="text-3xl mb-2">⬇</div>
+          <div className="font-semibold" style={{ color: TXT }}>Nada por enquanto</div>
+          <div className="text-sm">Toque no botão abaixo para registrar</div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {grupos.map(([dia, es]) => (
+            <div key={dia}>
+              {view === "7d" && <div className="text-xs mb-1.5 mt-2 capitalize" style={{ color: MUT }}>{fmtLonga(dia)}</div>}
+              <div className="flex flex-col gap-2">{es.map((e) => <EntryCard key={e.id} e={e} onEdit={onEdit} onDelete={onDelete} />)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- aba Histórico ----------
+function HistoricoTab({ entries, onEdit, onDelete }) {
+  const [ym, setYm] = useState(() => hoje().slice(0, 7));
+  const [sel, setSel] = useState(hoje());
+  const [y, m] = ym.split("-").map(Number);
+  const first = new Date(y, m - 1, 1);
+  const nDias = new Date(y, m, 0).getDate();
+  const counts = useMemo(() => {
+    const c = {};
+    for (const e of entries) if ((e.date || "").startsWith(ym)) c[e.date] = (c[e.date] || 0) + 1;
+    return c;
+  }, [entries, ym]);
+  const move = (d) => { const dt = new Date(y, m - 1 + d, 1); setYm(`${dt.getFullYear()}-${pad(dt.getMonth() + 1)}`); };
+  const doDia = entries.filter((e) => e.date === sel).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  const cells = [...Array(first.getDay()).fill(null), ...Array.from({ length: nDias }, (_, i) => i + 1)];
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-4" style={{ color: TXT }}>Histórico</h1>
+      <div className="rounded-2xl p-4" style={{ background: CARD }}>
+        <div className="flex justify-between items-center mb-3">
+          <button onClick={() => move(-1)} className="px-2" style={{ color: ACCENT }} aria-label="Mês anterior">‹</button>
+          <div className="font-bold capitalize" style={{ color: TXT }}>{first.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</div>
+          <button onClick={() => move(1)} className="px-2" style={{ color: ACCENT }} aria-label="Próximo mês">›</button>
+        </div>
+        <div className="grid grid-cols-7 gap-1 text-center text-[10px] mb-1" style={{ color: MUT }}>
+          {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => <div key={i}>{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((d, i) => {
+            if (!d) return <div key={i} />;
+            const ds = `${ym}-${pad(d)}`;
+            const n = counts[ds] || 0;
+            const isSel = ds === sel;
+            return (
+              <button key={i} onClick={() => setSel(ds)} className="rounded-lg py-1.5 text-center" style={{ background: isSel ? ACCENT : "transparent" }}>
+                <div className="text-sm font-semibold" style={{ color: isSel ? "#1a1610" : n ? TXT : MUT }}>{d}</div>
+                <div className="text-[10px]" style={{ color: isSel ? "#1a1610" : n ? ACCENT : "#3a352d" }}>{n || "–"}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <h2 className="font-bold mt-5 mb-2 capitalize" style={{ color: TXT }}>{fmtLonga(sel)} · {doDia.length}</h2>
+      <div className="flex flex-col gap-2">
+        {doDia.length === 0 ? <div className="text-sm" style={{ color: MUT }}>Sem registros neste dia.</div> : doDia.map((e) => <EntryCard key={e.id} e={e} onEdit={onEdit} onDelete={onDelete} />)}
+      </div>
+    </div>
+  );
+}
+
+// ---------- aba Análises ----------
+const SECOES = ["Resumo", "Bristol", "Local", "Hora", "Dia da semana", "Intervalo", "Evolução"];
+const INT_BUCKETS = [[0, 3], [3, 6], [6, 12], [12, 24], [24, 48], [48, 72], [72, Infinity]];
+const weekKey = (s) => { const d = new Date(s + "T12:00:00"); const off = (d.getDay() + 6) % 7; d.setDate(d.getDate() - off); return toStr(d); };
+
+function AnalisesTab({ entries }) {
+  const [sec, setSec] = useState("Resumo");
+  const [preset, setPreset] = useState("Tudo");
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
+  const [loc, setLoc] = useState("Todos");
+  const [metrica, setMetrica] = useState("freq"); // freq | bristol
+  const [gran, setGran] = useState("auto"); // auto | dia | semana | mes | ano
+
+  const all = useMemo(() => anotar(entries), [entries]);
+  const minDate = useMemo(() => { const ds = entries.map((e) => e.date).filter(validDate); return ds.length ? ds.reduce((a, b) => (a < b ? a : b)) : hoje(); }, [entries]);
+  const range = useMemo(() => {
+    if (preset === "4S") return [addDias(hoje(), -27), hoje()];
+    if (preset === "3M") return [addDias(hoje(), -89), hoje()];
+    if (preset === "1A") return [addDias(hoje(), -364), hoje()];
+    if (preset === "Período") return [validDate(ini) ? ini : minDate, validDate(fim) ? fim : hoje()];
+    return [minDate, hoje()];
+  }, [preset, ini, fim, minDate]);
+  const filt = useMemo(() => all.filter((e) => e.date >= range[0] && e.date <= range[1] && (loc === "Todos" || e.location === loc)), [all, range, loc]);
+  const span = diasEntre(range[0], range[1]);
+  const n = filt.length;
+
+  const granEfetiva = gran !== "auto" ? gran : span <= 120 ? "dia" : span <= 800 ? "semana" : "mes";
+
+  const stats = useMemo(() => {
+    const b = media(filt.map((e) => e.bristolType));
+    const h = media(filt.map((e) => e._h));
+    const iv = filt.map((e) => e._int).filter((v) => v != null && v < 24 * 30);
+    const diasAtivos = new Set(filt.map((e) => e.date)).size;
+    return { b, h, iv: media(iv), diasAtivos };
+  }, [filt]);
+
+  // série diária base para gráficos e médias móveis (limitada por segurança)
+  const serieDiaria = useMemo(() => {
+    const porDia = {};
+    for (const e of filt) (porDia[e.date] = porDia[e.date] || []).push(e.bristolType);
+    const buf = [];
+    let d = range[0], guard = 0;
+    while (d <= range[1] && guard++ < 5000) {
+      buf.push({ d, count: (porDia[d] || []).length, bristols: porDia[d] || [] });
+      d = addDias(d, 1);
+    }
+    let s7 = 0, s30 = 0;
+    for (let i = 0; i < buf.length; i++) {
+      s7 += buf[i].count - (i >= 7 ? buf[i - 7].count : 0);
+      s30 += buf[i].count - (i >= 30 ? buf[i - 30].count : 0);
+      buf[i].f7 = +(s7 / Math.min(i + 1, 7)).toFixed(2);
+      buf[i].f30 = +(s30 / Math.min(i + 1, 30)).toFixed(2);
+      const b7 = buf.slice(Math.max(0, i - 6), i + 1).flatMap((x) => x.bristols);
+      const b30 = buf.slice(Math.max(0, i - 29), i + 1).flatMap((x) => x.bristols);
+      buf[i].b7 = b7.length ? +media(b7).toFixed(2) : null;
+      buf[i].b30 = b30.length ? +media(b30).toFixed(2) : null;
+    }
+    return buf;
+  }, [filt, range]);
+
+  // agregação por granularidade
+  const serieAgg = useMemo(() => {
+    if (granEfetiva === "dia") return serieDiaria.map((x) => ({ k: x.d, label: fmtCurta(x.d), n: x.count, f7: x.f7, f30: x.f30, b7: x.b7, b30: x.b30 }));
+    const keyFn = granEfetiva === "semana" ? weekKey : granEfetiva === "mes" ? (s) => s.slice(0, 7) : (s) => s.slice(0, 4);
+    const m = {};
+    for (const x of serieDiaria) {
+      const k = keyFn(x.d);
+      m[k] = m[k] || { dias: 0, n: 0, bristols: [] };
+      m[k].dias++; m[k].n += x.count; m[k].bristols.push(...x.bristols);
+    }
+    return Object.entries(m).sort().map(([k, v]) => ({
+      k,
+      label: granEfetiva === "semana" ? fmtCurta(k) : granEfetiva === "mes" ? `${k.slice(5, 7)}/${k.slice(2, 4)}` : k,
+      n: v.n,
+      porDia: +(v.n / v.dias).toFixed(2),
+      bristol: v.bristols.length ? +media(v.bristols).toFixed(2) : null,
+    }));
+  }, [serieDiaria, granEfetiva]);
+
+  // dados de plotagem: linhas + médias móveis por granularidade, reamostrado e sem animação
+  const plot = useMemo(() => {
+    if (granEfetiva === "dia") {
+      const step = Math.max(1, Math.ceil(serieAgg.length / 400));
+      const data = serieAgg.filter((_, i) => i % step === 0 || i === serieAgg.length - 1);
+      const series = metrica === "freq"
+        ? [["f7", "Média móvel 7d", ACCENT, 2], ["f30", "Média móvel 30d", "#7a6f5d", 1.5]]
+        : [["b7", "Média móvel 7d", "#5fb26a", 2], ["b30", "Média móvel 30d", "#7a6f5d", 1.5]];
+      return { data, series };
+    }
+    const key = metrica === "freq" ? "porDia" : "bristol";
+    const win = granEfetiva === "semana" ? 4 : granEfetiva === "mes" ? 3 : 1;
+    const data = serieAgg.map((x, i) => {
+      const w = serieAgg.slice(Math.max(0, i - win + 1), i + 1).map((y) => y[key]).filter((v) => v != null);
+      return { ...x, val: x[key], mm: w.length ? +(w.reduce((a, b) => a + b, 0) / w.length).toFixed(2) : null };
+    });
+    const cor = metrica === "freq" ? ACCENT : "#5fb26a";
+    const series = win > 1
+      ? [["val", metrica === "freq" ? "No período" : "Bristol", "#5c5346", 1], ["mm", `Média móvel ${win} ${granEfetiva === "semana" ? "semanas" : "meses"}`, cor, 2]]
+      : [["val", metrica === "freq" ? "Por dia" : "Bristol", cor, 2]];
+    return { data, series };
+  }, [serieAgg, granEfetiva, metrica]);
+
+  const porAno = useMemo(() => {
+    const m = {};
+    for (const e of filt) { const k = e.date.slice(0, 4); m[k] = m[k] || { es: [] }; m[k].es.push(e); }
+    return Object.entries(m).sort().map(([k, { es }]) => {
+      const start = `${k}-01-01` < range[0] ? range[0] : `${k}-01-01`;
+      const end = `${k}-12-31` > range[1] ? range[1] : `${k}-12-31`;
+      return { ano: k, n: es.length, porDia: es.length / diasEntre(start, end), bristol: media(es.map((e) => e.bristolType)) };
+    });
+  }, [filt, range]);
+
+  const Filtros = (
+    <div className="mb-3">
+      <div className="flex gap-1.5 flex-wrap">
+        {["4S", "3M", "1A", "Tudo", "Período"].map((p) => <Chip key={p} on={preset === p} onClick={() => setPreset(p)}>{p}</Chip>)}
+      </div>
+      {preset === "Período" && (
+        <div className="flex gap-2 mt-2">
+          <input type="date" value={ini} onChange={(e) => setIni(e.target.value)} className="flex-1 rounded-lg px-2 py-1.5 text-xs border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", colorScheme: "dark" }} />
+          <input type="date" value={fim} onChange={(e) => setFim(e.target.value)} className="flex-1 rounded-lg px-2 py-1.5 text-xs border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", colorScheme: "dark" }} />
+        </div>
+      )}
+      <div className="flex gap-1.5 flex-wrap mt-2">
+        {["Todos", ...LOCAIS].map((l) => <Chip key={l} on={loc === l} onClick={() => setLoc(l)}>{l}</Chip>)}
+      </div>
+      <div className="text-[11px] mt-1.5" style={{ color: MUT }}>{n.toLocaleString("pt-BR")} registros · {fmtCurta(range[0])} a {fmtCurta(range[1])} · {span} dias</div>
+    </div>
+  );
+
+  const tooltipStyle = { contentStyle: { background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 11 }, labelStyle: { color: MUT } };
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-3" style={{ color: TXT }}>Análises</h1>
+      {Filtros}
+      <div className="flex gap-1.5 flex-wrap pb-2 mb-2">
+        {SECOES.map((s) => <Chip key={s} on={sec === s} onClick={() => setSec(s)}>{s}</Chip>)}
+      </div>
+
+      {sec === "Resumo" && (
+        <>
+          <div className="flex gap-2 mb-3">
+            <StatCard value={n.toLocaleString("pt-BR")} label="Registros" />
+            <StatCard value={fmt(n / span)} label="Por dia" />
+            <StatCard value={fmt(stats.b)} label="Bristol médio" />
+          </div>
+          <div className="flex gap-2 mb-3">
+            <StatCard value={stats.h != null ? `${Math.round(stats.h)}h` : "–"} label="Hora média" />
+            <StatCard value={fmt(stats.iv)} label="Intervalo (h)" />
+            <StatCard value={span ? Math.round((stats.diasAtivos / span) * 100) + "%" : "–"} label="Dias c/ registro" />
+          </div>
+        </>
+      )}
+
+      {sec === "Bristol" && (
+        <Section title="Distribuição Bristol">
+          {(() => {
+            const c = {}; for (let i = 1; i <= 7; i++) c[i] = 0;
+            for (const e of filt) c[e.bristolType] = (c[e.bristolType] || 0) + 1;
+            const max = Math.max(1, ...Object.values(c));
+            return Object.entries(c).map(([k, v]) => (
+              <HBar key={k} label={`Tipo ${k}`} v={v} max={max} color={CAT_COLOR[BRISTOL[k].cat]} r1={v} r2={`${n ? Math.round((v / n) * 100) : 0}%`} />
+            ));
+          })()}
+          <div className="text-[11px] mt-2 leading-relaxed" style={{ color: MUT }}>
+            {Object.entries(BRISTOL).map(([k, b]) => <div key={k}><b style={{ color: CAT_COLOR[b.cat] }}>{k}</b> {b.name}</div>)}
+          </div>
+        </Section>
+      )}
+
+      {sec === "Local" && (
+        <Section title="Por local">
+          {(() => {
+            const rows = LOCAIS.map((l) => {
+              const es = filt.filter((e) => e.location === l);
+              const dias = new Set(es.map((e) => e.date)).size;
+              return { l, n: es.length, porDia: dias ? es.length / dias : null, b: media(es.map((e) => e.bristolType)), iv: media(es.map((e) => e._int).filter((v) => v != null && v < 720)) };
+            }).filter((r) => r.n);
+            const max = Math.max(1, ...rows.map((r) => r.n));
+            return (
+              <>
+                {rows.map((r) => <HBar key={r.l} label={r.l} v={r.n} max={max} lw={88} r1={r.n} r2={`${n ? Math.round((r.n / n) * 100) : 0}%`} />)}
+                <div className="mt-3 text-[11px]" style={{ color: MUT, ...NUM }}>
+                  <div className="grid gap-x-4 font-bold mb-1" style={{ color: TXT, gridTemplateColumns: "5.5rem 4rem 3.5rem 4rem" }}><span>Local</span><span className="text-right">/dia ativo</span><span className="text-right">Bristol</span><span className="text-right">Interv. (h)</span></div>
+                  {rows.map((r) => <div key={r.l} className="grid gap-x-4 mb-0.5" style={{ gridTemplateColumns: "5.5rem 4rem 3.5rem 4rem" }}><span className="whitespace-nowrap">{r.l}</span><span className="text-right">{fmt(r.porDia)}</span><span className="text-right">{fmt(r.b)}</span><span className="text-right">{fmt(r.iv)}</span></div>)}
+                </div>
+              </>
+            );
+          })()}
+        </Section>
+      )}
+
+      {sec === "Hora" && (
+        <Section title="Por hora do dia">
+          {(() => {
+            const c = Array.from({ length: 24 }, () => []);
+            for (const e of filt) c[e._h].push(e.bristolType);
+            const max = Math.max(1, ...c.map((x) => x.length));
+            return c.map((es, h) => (es.length || (h >= 6 && h <= 23)) ? (
+              <HBar key={h} label={`${pad(h)}h`} v={es.length} max={max} r1={es.length} r2={es.length ? `B ${fmt(media(es))}` : ""} />
+            ) : null);
+          })()}
+        </Section>
+      )}
+
+      {sec === "Dia da semana" && (
+        <Section title="Por dia da semana">
+          {(() => {
+            const c = Array.from({ length: 7 }, () => []);
+            for (const e of filt) c[e._dow].push(e.bristolType);
+            const occ = Array(7).fill(0);
+            let d = range[0], guard = 0;
+            while (d <= range[1] && guard++ < 5000) { occ[new Date(d + "T12:00:00").getDay()]++; d = addDias(d, 1); }
+            const max = Math.max(1, ...c.map((x) => x.length));
+            return [1, 2, 3, 4, 5, 6, 0].map((i) => (
+              <HBar key={i} label={DIAS[i]} v={c[i].length} max={max} r1={`${fmt(occ[i] ? c[i].length / occ[i] : null)}/d`} r2={`B ${fmt(media(c[i]))}`} />
+            ));
+          })()}
+        </Section>
+      )}
+
+      {sec === "Intervalo" && (
+        <Section title="Intervalo entre registros (horas)">
+          {(() => {
+            const ivs = filt.map((e) => e._int).filter((v) => v != null);
+            const c = INT_BUCKETS.map(() => 0);
+            for (const v of ivs) { const i = INT_BUCKETS.findIndex(([a, b]) => v >= a && v < b); if (i >= 0) c[i]++; }
+            const max = Math.max(1, ...c);
+            const ord = ivs.length ? [...ivs].sort((x, y) => x - y) : [];
+            return (
+              <>
+                {INT_BUCKETS.map(([a, b], i) => <HBar key={i} label={b === Infinity ? "72h+" : `${a}–${b}h`} v={c[i]} max={max} r1={c[i]} r2={`${ivs.length ? Math.round((c[i] / ivs.length) * 100) : 0}%`} />)}
+                <div className="text-[11px] mt-2" style={{ color: MUT }}>Média: {fmt(media(ivs.filter((v) => v < 720)))}h · Mediana: {fmt(ord.length ? ord[Math.floor(ord.length / 2)] : null)}h</div>
+              </>
+            );
+          })()}
+        </Section>
+      )}
+
+      {sec === "Evolução" && (
+        <>
+          <div className="flex gap-1.5 flex-wrap mb-2">
+            <Chip on={metrica === "freq"} onClick={() => setMetrica("freq")}>Frequência</Chip>
+            <Chip on={metrica === "bristol"} onClick={() => setMetrica("bristol")}>Bristol</Chip>
+            <span className="mx-1" style={{ color: BORDER }}>|</span>
+            {[["auto", "Auto"], ["dia", "Dia"], ["semana", "Semana"], ["mes", "Mês"], ["ano", "Ano"]].map(([v, l]) => <Chip key={v} on={gran === v} onClick={() => setGran(v)}>{l}</Chip>)}
+          </div>
+          <Section title={`${metrica === "freq" ? "Frequência" : "Bristol médio"} por ${{ dia: "dia", semana: "semana", mes: "mês", ano: "ano" }[granEfetiva]}`}>
+            {serieAgg.length === 0 ? (
+              <div className="text-sm py-6 text-center" style={{ color: MUT }}>Sem dados no período selecionado.</div>
+            ) : (
+              <>
+                {granEfetiva === "dia" && <div className="text-[11px] mb-2" style={{ color: MUT }}>Médias móveis de 7 e 30 dias-calendário (corrigidas em relação à planilha, que usava os últimos 7 registros).</div>}
+                <div style={{ width: "100%", height: 210 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={plot.data} margin={{ top: 5, right: 5, bottom: 0, left: -25 }}>
+                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: MUT }} minTickGap={40} stroke={BORDER} />
+                      <YAxis tick={{ fontSize: 9, fill: MUT }} stroke={BORDER} domain={metrica === "bristol" ? [1, 7] : [0, "auto"]} allowDecimals />
+                      <Tooltip {...tooltipStyle} />
+                      {plot.series.map(([k, name, cor, w]) => (
+                        <Line key={k} isAnimationActive={false} type="monotone" dataKey={k} name={name} stroke={cor} dot={false} strokeWidth={w} connectNulls />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </>
+            )}
+          </Section>
+          <Section title="Por ano">
+            <div className="grid gap-x-5 text-[11px] font-bold mb-1" style={{ color: TXT, gridTemplateColumns: "3rem 4.5rem 3rem 3.5rem", ...NUM }}><span>Ano</span><span className="text-right">Registros</span><span className="text-right">/dia</span><span className="text-right">Bristol</span></div>
+            {porAno.map((r) => (
+              <div key={r.ano} className="grid gap-x-5 text-[11px] mb-0.5" style={{ color: MUT, gridTemplateColumns: "3rem 4.5rem 3rem 3.5rem", ...NUM }}>
+                <span style={{ color: TXT }}>{r.ano}</span><span className="text-right">{r.n.toLocaleString("pt-BR")}</span><span className="text-right">{fmt(r.porDia, 2)}</span><span className="text-right">{fmt(r.bristol, 2)}</span>
+              </div>
+            ))}
+          </Section>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- aba Dados ----------
+function DadosTab({ entries, onImport, onClear, msg }) {
+  const fileRef = useRef();
+  const doExport = () => {
+    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `n2j-backup-${hoje()}.json`;
+    a.click();
+  };
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-1" style={{ color: TXT }}>Dados</h1>
+      <div className="text-sm mb-5" style={{ color: MUT }}>{entries.length.toLocaleString("pt-BR")} registros armazenados.</div>
+      <div className="flex flex-col gap-2">
+        <button onClick={doExport} className="rounded-xl py-3 font-bold" style={{ background: ACCENT, color: "#1a1610" }}>Exportar backup (JSON)</button>
+        <button onClick={() => fileRef.current.click()} className="rounded-xl py-3 font-semibold border" style={{ background: CARD, color: TXT, borderColor: "#3a352d" }}>Importar JSON (mesclar)</button>
+        <button onClick={onClear} className="rounded-xl py-3 font-semibold border" style={{ background: CARD, color: "#d96a5a", borderColor: "#3a352d" }}>Apagar todos os dados</button>
+      </div>
+      <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => onImport(e.target.files[0])} />
+      {msg ? <div className="text-sm mt-4" style={{ color: ACCENT }}>{msg}</div> : null}
+      <div className="text-xs mt-6 leading-relaxed" style={{ color: MUT }}>
+        Os dados ficam no armazenamento deste artifact, vinculados à sua conta Claude. Exporte um backup de tempos em tempos — o arquivo é o mesmo formato aceito na importação. Campos antigos (cor, duração) são preservados no backup, apenas não aparecem no app.
+      </div>
+    </div>
+  );
+}
+
+function ImportScreen({ onImport, onEmpty, msg }) {
+  const fileRef = useRef();
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center" style={{ background: BG }}>
+      <div className="text-3xl font-black tracking-widest mb-1" style={{ color: ACCENT }}>N2J</div>
+      <div className="text-xs uppercase tracking-widest mb-6" style={{ color: MUT }}>Number 2 Journal</div>
+      <p className="text-sm mb-6 max-w-xs" style={{ color: MUT }}>Importe seu export.json para trazer o histórico completo, ou comece do zero.</p>
+      <button onClick={() => fileRef.current.click()} className="rounded-xl px-6 py-3 font-bold mb-2 w-64" style={{ background: ACCENT, color: "#1a1610" }}>Importar export.json</button>
+      <button onClick={onEmpty} className="rounded-xl px-6 py-3 font-semibold border w-64" style={{ background: CARD, color: TXT, borderColor: "#3a352d" }}>Começar vazio</button>
+      <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => onImport(e.target.files[0])} />
+      {msg ? <div className="text-sm mt-4" style={{ color: "#d96a5a" }}>{msg}</div> : null}
+    </div>
+  );
+}
+
+// ---------- raiz ----------
+function App() {
+  const [entries, setEntries] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState("hoje");
+  const [modal, setModal] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveTimer = useRef();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await window.storage.get(STORE_KEY);
+        if (r && r.value) { setEntries(JSON.parse(r.value)); setReady(true); return; }
+      } catch (err) { /* primeira execução */ }
+      setEntries([]);
+    })();
+  }, []);
+
+  const persist = (next) => {
+    setEntries(next);
+    setSaving(true);
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try { await window.storage.set(STORE_KEY, JSON.stringify(next)); }
+      catch (err) { setMsg("Não consegui salvar — verifique a conexão e tente de novo."); }
+      setSaving(false);
+    }, 600);
+  };
+
+  const parseFile = (file, cb) => {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const d = JSON.parse(r.result);
+        const arr = Array.isArray(d) ? d : d.entries || d.data;
+        if (!Array.isArray(arr) || !arr.length || !arr[0].date || !arr[0].bristolType) throw new Error("formato");
+        cb(arr);
+      } catch (err) { setMsg("Este arquivo não parece um export válido. Esperado: array JSON com os campos date e bristolType."); }
+    };
+    r.readAsText(file);
+  };
+
+  const firstImport = (file) => parseFile(file, (arr) => { persist(arr); setReady(true); setMsg(""); });
+  const mergeImport = (file) => parseFile(file, (arr) => {
+    const ids = new Set(entries.map((e) => e.id));
+    const added = arr.filter((e) => !ids.has(e.id));
+    persist([...entries, ...added]);
+    setMsg(`${added.length} registros novos importados (${arr.length - added.length} duplicados ignorados).`);
+  });
+
+  const saveEntry = (f) => {
+    const clean = { ...f };
+    delete clean._h; delete clean._dow; delete clean._int;
+    const next = clean.id ? entries.map((e) => (e.id === clean.id ? clean : e)) : [{ ...clean, id: Date.now() + Math.random().toString(36).slice(2, 8), createdAt: new Date().toISOString() }, ...entries];
+    persist(next);
+    setModal(null);
+  };
+  const delEntry = (id) => { if (confirm("Apagar este registro?")) persist(entries.filter((e) => e.id !== id)); };
+  const clearAll = async () => {
+    if (!confirm("Apagar TODOS os dados? Exporte um backup antes, se ainda não fez.")) return;
+    try { await window.storage.delete(STORE_KEY); } catch (err) {}
+    setEntries([]); setReady(false); setMsg("");
+  };
+  const newEntry = () => setModal({ date: hoje(), time: agora(), bristolType: 4, urgency: 3, location: "SP", notes: "", feeling: null, quantity: null });
+
+  if (entries === null) return <div className="min-h-screen flex items-center justify-center" style={{ background: BG, color: MUT }}>Carregando…</div>;
+  if (!ready) return <ImportScreen onImport={firstImport} onEmpty={() => { setReady(true); persist([]); }} msg={msg} />;
+
+  const tabs = [["hoje", "⬇", "Hoje"], ["hist", "📅", "Histórico"], ["anal", "📊", "Análises"], ["dados", "🗄", "Dados"]];
+  return (
+    <div className="min-h-screen" style={{ background: BG, fontFamily: "system-ui, sans-serif" }}>
+      {modal ? (
+        <EntryModal initial={modal} onSave={saveEntry} onClose={() => setModal(null)} />
+      ) : (
+        <>
+          <div className="max-w-md mx-auto px-4 pt-6" style={{ paddingBottom: "6.5rem" }}>
+            {tab === "hoje" && <HojeTab entries={entries} onEdit={setModal} onDelete={delEntry} goTo={setTab} />}
+            {tab === "hist" && <HistoricoTab entries={entries} onEdit={setModal} onDelete={delEntry} />}
+            {tab === "anal" && <AnalisesTab entries={entries} />}
+            {tab === "dados" && <DadosTab entries={entries} onImport={mergeImport} onClear={clearAll} msg={msg} />}
+          </div>
+          <nav className="sticky bottom-0 left-0 right-0 border-t" style={{ background: BG, borderColor: BORDER }}>
+            {tab !== "dados" && (
+              <button onClick={newEntry} className="absolute left-1/2 -translate-x-1/2 rounded-full text-2xl font-bold shadow-lg" style={{ width: 56, height: 56, background: ACCENT, color: "#1a1610", top: -66 }} aria-label="Novo registro">+</button>
+            )}
+            <div className="max-w-md mx-auto flex" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+              {tabs.map(([id, ic, label]) => (
+                <button key={id} onClick={() => setTab(id)} className="flex-1 py-3 text-center text-xs" style={{ color: tab === id ? ACCENT : MUT }}>
+                  <div className="text-base">{ic}</div>{label}
+                </button>
+              ))}
+            </div>
+          </nav>
+        </>
+      )}
+      {saving && <div className="fixed top-2 right-3 text-[10px]" style={{ color: MUT }}>salvando…</div>}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
