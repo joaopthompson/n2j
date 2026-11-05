@@ -457,7 +457,7 @@ function AnalisesTab({ entries }) {
             <StatCard value={stats.h != null ? `${Math.round(stats.h)}h` : "–"} label="Hora média" />
             <StatCard value={fmt(stats.iv)} label="Intervalo (h)" />
             {loc === "Todos"
-              ? <StatCard value={(span - stats.diasAtivos).toLocaleString("pt-BR")} label="Dias sem registro" />
+              ? <StatCard value={(span - stats.diasAtivos).toLocaleString("pt-BR")} label="Dias sem registro" sub={span ? `${Math.round(((span - stats.diasAtivos) / span) * 100)}% do período` : null} />
               : <StatCard value={stats.diasAtivos.toLocaleString("pt-BR")} label="Dias no local" />}
           </div>
         </>
