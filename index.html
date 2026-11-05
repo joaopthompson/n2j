@@ -37,6 +37,7 @@ window.storage = {
 const { useState, useEffect, useRef, useMemo } = React;
 const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } = Recharts;
 
+
 // ---------- constantes ----------
 const BRISTOL = {
   1: { name: "Bolinhas duras separadas", cat: "irregular" },
@@ -194,7 +195,8 @@ function EntryModal({ initial, onSave, onClose }) {
         </Row>
         <Row label="Local"><div className="flex gap-1.5 flex-wrap">{LOCAIS.map((l) => <Opt key={l} on={f.location === l} onClick={() => set("location", l)}>{l}</Opt>)}</div></Row>
         <Row label="Notas"><input value={f.notes || ""} onChange={(e) => set("notes", e.target.value)} placeholder="Opcional" className="w-full rounded-xl px-3 border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", fontSize: 16, height: 48 }} /></Row>
-        <button onClick={() => onSave(f)} className="w-full rounded-xl py-3 font-bold" style={{ background: ACCENT, color: "#1a1610" }}>Salvar</button>
+        {!(f.bristolType != null && f.urgency != null && f.location != null) && <div className="text-xs text-center mb-2" style={{ color: MUT }}>Selecione Bristol, urgência e local</div>}
+        <button onClick={() => { if (f.bristolType != null && f.urgency != null && f.location != null) onSave(f); }} disabled={!(f.bristolType != null && f.urgency != null && f.location != null)} className="w-full rounded-xl py-3 font-bold" style={f.bristolType != null && f.urgency != null && f.location != null ? { background: ACCENT, color: "#1a1610" } : { background: CARD2, color: MUT, border: "1px solid #3a352d" }}>Salvar</button>
     </div>
   );
 }
@@ -205,9 +207,6 @@ function HojeTab({ entries, onEdit, onDelete, goTo }) {
   const t = hoje();
   const doDia = entries.filter((e) => e.date === t).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   const sete = entries.filter((e) => e.date >= addDias(t, -6));
-  const dates = entries.map((e) => e.date).filter(validDate).sort();
-  const span = dates.length ? diasEntre(dates[0], t) : 1;
-  const { cur } = computeStreaks(entries);
   const lista = view === "hoje" ? doDia : [...sete].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   // agrupa por dia quando 7d
   const grupos = useMemo(() => {
@@ -225,9 +224,9 @@ function HojeTab({ entries, onEdit, onDelete, goTo }) {
       <h1 className="text-2xl font-bold mb-4 capitalize" style={{ color: TXT }}>{fmtLonga(t)}</h1>
       <div className="flex gap-2 mb-6">
         <StatCard value={doDia.length} label="Hoje" active={view === "hoje"} onClick={() => setView("hoje")} />
-        <StatCard value={sete.length} label="7 dias" sub={`média ${fmt(sete.length / 7)}`} active={view === "7d"} onClick={() => setView("7d")} />
-        <StatCard value={fmt(entries.length / span)} label="Média/dia" onClick={() => goTo("anal")} />
-        <StatCard value={cur} label="Sequência" onClick={() => goTo("hist")} />
+        <StatCard value={sete.length} label="7 dias" active={view === "7d"} onClick={() => setView("7d")} />
+        <StatCard value={fmt(sete.length / 7)} label="Média/dia" sub="7 dias" onClick={() => goTo("anal")} />
+        <StatCard value={fmt(media(sete.map((e) => e.bristolType)))} label="Bristol médio" sub="7 dias" onClick={() => goTo("anal")} />
       </div>
       <div className="flex items-center justify-between mb-2">
         <h2 className="font-bold" style={{ color: TXT }}>{view === "hoje" ? "Registros de hoje" : "Últimos 7 dias"}</h2>
@@ -412,12 +411,14 @@ function AnalisesTab({ entries }) {
     return Object.entries(m).sort().map(([k, { es }]) => {
       const start = `${k}-01-01` < range[0] ? range[0] : `${k}-01-01`;
       const end = `${k}-12-31` > range[1] ? range[1] : `${k}-12-31`;
-      return { ano: k, n: es.length, porDia: es.length / diasEntre(start, end), bristol: media(es.map((e) => e.bristolType)) };
+      const dias = loc === "Todos" ? diasEntre(start, end) : new Set(es.map((x) => x.date)).size;
+      return { ano: k, n: es.length, porDia: dias ? es.length / dias : null, bristol: media(es.map((e) => e.bristolType)) };
     });
-  }, [filt, range]);
+  }, [filt, range, loc]);
 
   const Filtros = (
     <div className="mb-3">
+      <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: MUT }}>Período</div>
       <div className="flex gap-1.5 flex-wrap">
         {["4S", "3M", "1A", "Tudo", "Período"].map((p) => <Chip key={p} on={preset === p} onClick={() => setPreset(p)}>{p}</Chip>)}
       </div>
@@ -427,7 +428,8 @@ function AnalisesTab({ entries }) {
           <input type="date" value={fim} onChange={(e) => setFim(e.target.value)} className="flex-1 rounded-lg px-2 py-1.5 text-xs border" style={{ background: CARD2, color: TXT, borderColor: "#3a352d", colorScheme: "dark" }} />
         </div>
       )}
-      <div className="flex gap-1.5 flex-wrap mt-2">
+      <div className="text-[10px] uppercase tracking-wide mb-1 mt-2.5" style={{ color: MUT }}>Local</div>
+      <div className="flex gap-1.5 flex-wrap">
         {["Todos", ...LOCAIS].map((l) => <Chip key={l} on={loc === l} onClick={() => setLoc(l)}>{l}</Chip>)}
       </div>
       <div className="text-[11px] mt-1.5" style={{ color: MUT }}>{n.toLocaleString("pt-BR")} registros · {fmtCurta(range[0])} a {fmtCurta(range[1])} · {span} dias</div>
@@ -448,13 +450,15 @@ function AnalisesTab({ entries }) {
         <>
           <div className="flex gap-2 mb-3">
             <StatCard value={n.toLocaleString("pt-BR")} label="Registros" />
-            <StatCard value={fmt(n / span)} label="Por dia" />
+            <StatCard value={fmt((loc === "Todos" ? span : stats.diasAtivos) ? n / (loc === "Todos" ? span : stats.diasAtivos) : null)} label="Por dia" sub={loc === "Todos" ? null : "no local"} />
             <StatCard value={fmt(stats.b)} label="Bristol médio" />
           </div>
           <div className="flex gap-2 mb-3">
             <StatCard value={stats.h != null ? `${Math.round(stats.h)}h` : "–"} label="Hora média" />
             <StatCard value={fmt(stats.iv)} label="Intervalo (h)" />
-            <StatCard value={span ? Math.round((stats.diasAtivos / span) * 100) + "%" : "–"} label="Dias c/ registro" />
+            {loc === "Todos"
+              ? <StatCard value={(span - stats.diasAtivos).toLocaleString("pt-BR")} label="Dias sem registro" />
+              : <StatCard value={stats.diasAtivos.toLocaleString("pt-BR")} label="Dias no local" />}
           </div>
         </>
       )}
@@ -696,7 +700,7 @@ function App() {
     try { await window.storage.delete(STORE_KEY); } catch (err) {}
     setEntries([]); setReady(false); setMsg("");
   };
-  const newEntry = () => setModal({ date: hoje(), time: agora(), bristolType: 4, urgency: 3, location: "SP", notes: "", feeling: null, quantity: null });
+  const newEntry = () => setModal({ date: hoje(), time: agora(), bristolType: null, urgency: null, location: null, notes: "", feeling: null, quantity: null });
 
   if (entries === null) return <div className="min-h-screen flex items-center justify-center" style={{ background: BG, color: MUT }}>Carregando…</div>;
   if (!ready) return <ImportScreen onImport={firstImport} onEmpty={() => { setReady(true); persist([]); }} msg={msg} />;
@@ -732,7 +736,7 @@ function App() {
     </div>
   );
 }
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
 </script>
 </body>
 </html>
